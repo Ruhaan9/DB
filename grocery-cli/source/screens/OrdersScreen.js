@@ -1,36 +1,37 @@
 // source/screens/OrdersScreen.js
-import React, {useState, useEffect} from 'react';
-import {Box, Text, useInput} from 'ink';
-import TextInput from 'ink-text-input';
+// Customer: review cart → place order, view past orders, cancel order
+// Admin:    view all orders (via analytics/orders/full), cancel any order
+import React, { useState, useEffect } from 'react';
+import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
-import {getOrders, getOrder, placeOrder, cancelOrder, getProducts} from '../api.js';
+import TextInput   from 'ink-text-input';
+import { setTyping } from '../typingContext.js';
+import { getOrders, getOrder, placeOrder, cancelOrder } from '../api.js';
 
 const MODES = {
-	LIST: 'list',
-	DETAIL: 'detail',
-	PLACE: 'place',
+	LIST:           'list',
+	DETAIL:         'detail',
+	CART_REVIEW:    'cart_review',
+	CONFIRM_ORDER:  'confirm_order',
 	CONFIRM_CANCEL: 'confirm_cancel',
 };
 
-export default function OrdersScreen() {
-	const [mode, setMode] = useState(MODES.LIST);
-	const [orders, setOrders] = useState([]);
-	const [selectedOrder, setSelectedOrder] = useState(null);
+export default function OrdersScreen({ user, cart, setCart }) {
+	const isAdmin = user?.role === 'admin';
+
+	const [mode, setMode]               = useState(MODES.LIST);
+	const [orders, setOrders]           = useState([]);
 	const [orderDetail, setOrderDetail] = useState(null);
-	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState('');
-	const [success, setSuccess] = useState('');
+	const [loading, setLoading]         = useState(true);
+	const [error, setError]             = useState('');
+	const [success, setSuccess]         = useState('');
 
-	// Place order state
-	const [allProducts, setAllProducts] = useState([]);
-	const [cart, setCart] = useState([]); // [{productId, quantity}]
-	const [placeStep, setPlaceStep] = useState('select_product'); // 'select_product' | 'enter_qty'
-	const [pendingProduct, setPendingProduct] = useState(null);
-	const [qtyInput, setQtyInput] = useState('');
+	// For editing cart quantities before placing
+	const [editIdx, setEditIdx]   = useState(0);
+	const [editQty, setEditQty]   = useState('');
+	const [editMode, setEditMode] = useState(false);
 
-	useEffect(() => {
-		fetchOrders();
-	}, []);
+	useEffect(() => { fetchOrders(); }, []);
 
 	const fetchOrders = async () => {
 		setLoading(true);
@@ -38,8 +39,13 @@ export default function OrdersScreen() {
 		try {
 			const res = await getOrders();
 			setOrders(res.data);
-		} catch {
-			setError('Failed to load orders.');
+		} catch (err) {
+			const status = err.response?.status;
+			if (status === 401) {
+				setError('Session expired — please restart and log in again.');
+			} else {
+				setError(err.response?.data?.error || 'Failed to load orders.');
+			}
 		} finally {
 			setLoading(false);
 		}
@@ -58,25 +64,18 @@ export default function OrdersScreen() {
 		}
 	};
 
-	const fetchAllProducts = async () => {
-		try {
-			const res = await getProducts();
-			setAllProducts(res.data);
-		} catch {}
-	};
-
-	const submitOrder = async () => {
-		if (cart.length === 0) {
-			setError('Cart is empty.');
+	const handlePlaceOrder = async () => {
+		if (!cart || cart.length === 0) {
+			setError('Your cart is empty. Add products from the Products tab first.');
 			setMode(MODES.LIST);
 			return;
 		}
-
 		setLoading(true);
 		try {
-			await placeOrder(cart);
-			setSuccess(`Order placed with ${cart.length} item(s)!`);
+			const items = cart.map((c) => ({ productId: c.productId, quantity: c.quantity }));
+			await placeOrder(items);
 			setCart([]);
+			setSuccess(`Order placed! ${items.length} item(s) submitted.`);
 			await fetchOrders();
 			setMode(MODES.LIST);
 		} catch (err) {
@@ -87,45 +86,6 @@ export default function OrdersScreen() {
 		}
 	};
 
-	useInput((input, key) => {
-		if (mode === MODES.LIST) {
-			if (input === 'n') {
-				fetchAllProducts();
-				setCart([]);
-				setPlaceStep('select_product');
-				setPendingProduct(null);
-				setMode(MODES.PLACE);
-			}
-
-			if (key.escape) {
-				setError('');
-				setSuccess('');
-			}
-		}
-
-		if (mode === MODES.DETAIL) {
-			if (key.escape) setMode(MODES.LIST);
-			if (input === 'x') setMode(MODES.CONFIRM_CANCEL);
-		}
-
-		if (mode === MODES.CONFIRM_CANCEL) {
-			if (input === 'y') handleCancel();
-			if (input === 'n' || key.escape) setMode(MODES.DETAIL);
-		}
-
-		if (mode === MODES.PLACE) {
-			if (key.escape) {
-				if (placeStep === 'enter_qty') {
-					setPlaceStep('select_product');
-					setPendingProduct(null);
-					setQtyInput('');
-				} else {
-					setMode(MODES.LIST);
-				}
-			}
-		}
-	});
-
 	const handleCancel = async () => {
 		if (!orderDetail) return;
 		setLoading(true);
@@ -135,160 +95,220 @@ export default function OrdersScreen() {
 			await fetchOrders();
 			setMode(MODES.LIST);
 		} catch (err) {
-			setError(err.response?.data?.error || 'Failed to cancel.');
+			setError(err.response?.data?.error || 'Failed to cancel order.');
 			setMode(MODES.LIST);
 		} finally {
 			setLoading(false);
 		}
 	};
 
-	// ── Place Order ───────────────────────────────────────────────────────────
-	if (mode === MODES.PLACE) {
-		if (placeStep === 'enter_qty' && pendingProduct) {
+	useInput((input, key) => {
+		if (key.escape) {
+			if (mode === MODES.DETAIL || mode === MODES.CART_REVIEW ||
+				mode === MODES.CONFIRM_ORDER || mode === MODES.CONFIRM_CANCEL) {
+				setMode(MODES.LIST);
+				setError('');
+				setSuccess('');
+				setEditMode(false);
+			}
+			return;
+		}
+
+		if (mode === MODES.LIST) {
+			// Open cart review
+			if ((input === 'c' || input === 'C') && !isAdmin) {
+				setMode(MODES.CART_REVIEW);
+				setEditMode(false);
+			}
+		}
+
+		if (mode === MODES.DETAIL) {
+			if (input === 'x' || input === 'X') setMode(MODES.CONFIRM_CANCEL);
+		}
+
+		if (mode === MODES.CONFIRM_CANCEL) {
+			if (input === 'y' || input === 'Y') handleCancel();
+			if (input === 'n' || input === 'N') setMode(MODES.DETAIL);
+		}
+	});
+
+	// ── CART REVIEW ───────────────────────────────────────────────────────────
+	if (mode === MODES.CART_REVIEW) {
+		if (!cart || cart.length === 0) {
 			return (
 				<Box flexDirection="column" padding={1}>
-					<Text bold color="cyan">New Order — Add Item</Text>
-					<Text>Product: <Text color="yellow">{pendingProduct.ProductName}</Text>  Price: {pendingProduct.Price}  Stock: {pendingProduct.StockQuantity}</Text>
-					<Box marginTop={1}>
-						<Text color="yellow">Quantity: </Text>
-						<TextInput
-							value={qtyInput}
-							onChange={setQtyInput}
-							onSubmit={() => {
-								const qty = Number(qtyInput);
-								if (!qty || qty <= 0) return;
-								setCart((c) => [...c, {productId: pendingProduct.ProductID, quantity: qty}]);
-								setQtyInput('');
-								setPendingProduct(null);
-								setPlaceStep('select_product');
-							}}
-						/>
-					</Box>
-					<Text dimColor>ENTER to add • ESC to go back</Text>
+					<Text bold color="cyan">Your Cart</Text>
+					<Text dimColor>Cart is empty. Go to Products and add items first.</Text>
+					<Text dimColor marginTop={1}>ESC to go back</Text>
 				</Box>
 			);
 		}
 
-		// Product selector
-		const remaining = allProducts.filter(
-			(p) => !cart.find((c) => c.productId === p.ProductID),
-		);
-		const productItems = remaining.map((p) => ({
-			label: `${p.ProductName.padEnd(25)} PKR ${p.Price}  (stock: ${p.StockQuantity})`,
-			value: p,
-		}));
+		const total = cart.reduce((s, c) => s + c.price * c.quantity, 0);
 
-		const confirmItem = {label: `✓ Place Order (${cart.length} item(s))`, value: '__confirm__'};
-		const items = [...productItems, confirmItem];
-
-		return (
-			<Box flexDirection="column" padding={1}>
-				<Text bold color="cyan">New Order</Text>
-
-				{cart.length > 0 && (
-					<Box flexDirection="column" marginBottom={1}>
-						<Text color="green">Cart:</Text>
-						{cart.map((c, i) => {
-							const p = allProducts.find((x) => x.ProductID === c.productId);
-							return (
-								<Text key={i} color="green">
-									  {p?.ProductName} × {c.quantity}
-								</Text>
-							);
-						})}
+		// Editing a cart item quantity
+		if (editMode) {
+			const item = cart[editIdx];
+			return (
+				<Box flexDirection="column" padding={1}>
+					<Text bold color="cyan">Edit Quantity — {item.productName}</Text>
+					<Text>Current quantity: <Text color="yellow">{item.quantity}</Text>  (0 = remove)</Text>
+					<Box marginTop={1}>
+						<Text color="yellow">New quantity: </Text>
+						<TextInput
+							value={editQty}
+							onChange={setEditQty}
+							onSubmit={() => {
+								const qty = Number(editQty);
+								if (isNaN(qty) || qty < 0) { setEditMode(false); return; }
+								if (qty === 0) {
+									setCart((prev) => prev.filter((_, i) => i !== editIdx));
+								} else {
+									setCart((prev) => prev.map((c, i) => i === editIdx ? { ...c, quantity: qty } : c));
+								}
+								setEditMode(false);
+								setEditQty('');
+							}}
+						/>
 					</Box>
-				)}
+					<Text dimColor>ENTER to confirm • ESC to cancel</Text>
+				</Box>
+			);
+		}
 
-				<Text dimColor>Select a product to add, or confirm:</Text>
-				<SelectInput
-					items={items}
-					onSelect={(item) => {
-						if (item.value === '__confirm__') {
-							submitOrder();
-						} else {
-							setPendingProduct(item.value);
-							setPlaceStep('enter_qty');
-						}
-					}}
-				/>
-				<Text dimColor>ESC to cancel</Text>
-			</Box>
-		);
-	}
+		const cartItems = cart.map((c, i) => ({
+			label: `${c.productName.padEnd(26)}  ×${c.quantity}  PKR ${(c.price * c.quantity).toFixed(2)}`,
+			value: i,
+		}));
+		const actions = [
+			{ label: `✓ Place Order  (Total: PKR ${total.toFixed(2)})`, value: '__place__' },
+			{ label: '✎ Edit an item quantity',                         value: '__edit__'  },
+			{ label: '✗ Clear entire cart',                             value: '__clear__' },
+		];
 
-	// ── Order Detail ──────────────────────────────────────────────────────────
-	if (mode === MODES.DETAIL && orderDetail) {
 		return (
 			<Box flexDirection="column" padding={1}>
-				<Text bold color="cyan">Order #{orderDetail.OrderID}</Text>
-				<Text>Date: {new Date(orderDetail.OrderDate).toLocaleDateString()}</Text>
-				<Text>Customer: {orderDetail.Username}  Age: {orderDetail.Age}  Gender: {orderDetail.Gender}</Text>
+				<Text bold color="cyan">Your Cart  ({cart.length} items)</Text>
 
 				<Box marginTop={1} flexDirection="column">
-					<Text bold>Items:</Text>
-					{orderDetail.items.map((item) => (
-						<Box key={item.OrderDetailID}>
-							<Text>  {item.ProductName.padEnd(25)} × {item.Quantity}  @ PKR {item.UnitPrice}  = PKR {item.LineTotal}</Text>
-						</Box>
+					{cart.map((c, i) => (
+						<Text key={i}>
+							<Text color="yellow">{String(i + 1).padStart(2)}. </Text>
+							<Text>{c.productName.padEnd(26)}</Text>
+							<Text>  ×{c.quantity}  </Text>
+							<Text color="green">PKR {(c.price * c.quantity).toFixed(2)}</Text>
+						</Text>
 					))}
 				</Box>
 
 				<Box marginTop={1}>
 					<Text bold>Total: </Text>
-					<Text color="green">PKR {orderDetail.totalAmount.toFixed(2)}</Text>
+					<Text bold color="green">PKR {total.toFixed(2)}</Text>
 				</Box>
 
+				<Box marginTop={1}>
+					<SelectInput
+						items={actions}
+						onSelect={(item) => {
+							if (item.value === '__place__') {
+								handlePlaceOrder();
+							} else if (item.value === '__edit__') {
+								// Pick which item to edit
+								setEditIdx(0);
+								setEditQty(String(cart[0].quantity));
+								setEditMode(true);
+							} else if (item.value === '__clear__') {
+								setCart([]);
+								setMode(MODES.LIST);
+							}
+						}}
+					/>
+				</Box>
+				<Text dimColor>ESC to go back</Text>
+			</Box>
+		);
+	}
+
+	// ── ORDER DETAIL ──────────────────────────────────────────────────────────
+	if (mode === MODES.DETAIL && orderDetail) {
+		return (
+			<Box flexDirection="column" padding={1}>
+				<Text bold color="cyan">Order #{orderDetail.OrderID}</Text>
+				<Text>Date    : {new Date(orderDetail.OrderDate).toLocaleDateString()}</Text>
+				<Text>Customer: {orderDetail.Username}   Age: {orderDetail.Age}   Gender: {orderDetail.Gender}</Text>
+
 				<Box marginTop={1} flexDirection="column">
-					<Text dimColor>X to cancel order • ESC to go back</Text>
+					<Text bold underline>Items:</Text>
+					{orderDetail.items?.map((item) => (
+						<Text key={item.OrderDetailID}>
+							{'  '}{item.ProductName.padEnd(26)} × {item.Quantity}  @ PKR {item.UnitPrice}  = PKR {item.LineTotal}
+						</Text>
+					))}
+				</Box>
+
+				<Box marginTop={1}>
+					<Text bold>Total: </Text>
+					<Text color="green">PKR {orderDetail.totalAmount?.toFixed(2)}</Text>
+				</Box>
+
+				<Box marginTop={1}>
+					<Text dimColor>X = cancel this order • ESC = back</Text>
 				</Box>
 			</Box>
 		);
 	}
 
-	// ── Confirm Cancel ────────────────────────────────────────────────────────
+	// ── CONFIRM CANCEL ────────────────────────────────────────────────────────
 	if (mode === MODES.CONFIRM_CANCEL) {
 		return (
 			<Box flexDirection="column" padding={1}>
-				<Text bold color="red">Cancel order #{orderDetail?.OrderID}?</Text>
-				<Text>Stock will be restored.</Text>
+				<Text bold color="red">Cancel Order #{orderDetail?.OrderID}?</Text>
+				<Text dimColor>Stock will be restored automatically.</Text>
 				<Box marginTop={1}>
-					<Text color="red">Y</Text>
-					<Text> = Yes, cancel   </Text>
-					<Text color="green">N</Text>
+					<Text color="red" bold>Y</Text>
+					<Text> = Yes, cancel    </Text>
+					<Text color="green" bold>N</Text>
 					<Text> = No, keep it</Text>
 				</Box>
 			</Box>
 		);
 	}
 
-	// ── Orders List ───────────────────────────────────────────────────────────
+	// ── ORDERS LIST ───────────────────────────────────────────────────────────
+	const cartTotal = cart?.reduce((s, c) => s + c.price * c.quantity, 0) || 0;
+
 	const orderItems = orders.map((o) => ({
-		label: `#${String(o.OrderID).padEnd(5)} ${new Date(o.OrderDate).toLocaleDateString().padEnd(12)} ${o.Username.padEnd(15)} PKR ${String(o.TotalAmount).padStart(8)}  (${o.ItemCount} items)`,
+		label: `#${String(o.OrderID).padEnd(5)} ${new Date(o.OrderDate).toLocaleDateString().padEnd(12)} ${o.Username.padEnd(16)} PKR ${String(Number(o.TotalAmount).toFixed(2)).padStart(9)}  (${o.ItemCount} items)`,
 		value: o,
 	}));
 
 	return (
 		<Box flexDirection="column" padding={1}>
-			<Text bold color="green">My Orders</Text>
+			<Box>
+				<Text bold color="green">My Orders</Text>
+				{!isAdmin && cart && cart.length > 0 && (
+					<Text color="yellow">   🛒 Cart: {cart.reduce((s,c)=>s+c.quantity,0)} items ({cart.length} products)  PKR {cartTotal.toFixed(2)}  — press C to review</Text>
+				)}
+			</Box>
 
-			{error && <Text color="red">✗ {error}</Text>}
-			{success && <Text color="green">✓ {success}</Text>}
+			{error   && <Text color="red"   marginTop={0}>✗ {error}</Text>}
+			{success && <Text color="green" marginTop={0}>✓ {success}</Text>}
 
 			{loading ? (
-				<Text color="cyan">Loading...</Text>
+				<Text color="cyan">Loading…</Text>
 			) : orders.length === 0 ? (
 				<Text dimColor>No orders yet.</Text>
 			) : (
 				<SelectInput
 					items={orderItems}
-					onSelect={(item) => {
-						setSelectedOrder(item.value);
-						fetchOrderDetail(item.value.OrderID);
-					}}
+					onSelect={(item) => fetchOrderDetail(item.value.OrderID)}
 				/>
 			)}
 
-			<Text dimColor marginTop={1}>ENTER = view details • N = new order</Text>
+			<Box marginTop={1} flexDirection="column">
+				<Text dimColor>ENTER = view order details</Text>
+				{!isAdmin && <Text dimColor>C = view/place cart</Text>}
+			</Box>
 		</Box>
 	);
 }

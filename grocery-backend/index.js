@@ -14,7 +14,11 @@ const PORT = process.env.PORT || 3000;
 // ─────────────────────────────────────────────
 //  MIDDLEWARE
 // ─────────────────────────────────────────────
-app.use(cors({ origin: true, credentials: true }));
+// Allow both browser localhost origins and the CLI (no Origin header)
+app.use(cors({
+    origin: (origin, cb) => cb(null, true),   // mirror any origin (dev only)
+    credentials: true,
+}));
 app.use(express.json());
 app.use(
     session({
@@ -36,7 +40,7 @@ function requireAuth(req, res, next) {
 }
 
 // ─────────────────────────────────────────────
-//  MOUNT ANALYTICS ROUTER
+//  MOUNT ANALYTICS ROUTER (after session middleware)
 // ─────────────────────────────────────────────
 app.use('/api/analytics', analyticsRouter);
 
