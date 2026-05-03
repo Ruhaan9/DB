@@ -1,9 +1,10 @@
 // source/screens/AnalyticsScreen.js
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import TextInput   from 'ink-text-input';
 import { setTyping } from '../typingContext.js';
+import Spinner from '../components/Spinner.js';
 import {
 	getOrdersFull, getCostByGender, getBestSellers, getInactiveUsers,
 	getAboveAvgPrice, getGenderSales, getTopSeller, getBoughtTogether,
@@ -217,9 +218,14 @@ export default function AnalyticsScreen({ user }) {
 	const [awaitParam, setAwaitParam] = useState(false); // waiting for param input
 	const [pendingKey, setPendingKey] = useState('');
 
+	// Lock nav whenever param input prompt is shown
+	useEffect(() => {
+		setTyping(awaitParam);
+	}, [awaitParam]);
+
 	useInput((input, key) => {
 		if (key.escape) {
-			if (awaitParam) { setAwaitParam(false); setPendingKey(''); return; }
+			if (awaitParam) { setTyping(false); setAwaitParam(false); setPendingKey(''); return; }
 			setView('menu');
 			setData(null);
 			setError('');
@@ -285,9 +291,8 @@ export default function AnalyticsScreen({ user }) {
 					<Text color="yellow">{report?.paramLabel}: </Text>
 					<TextInput
 						value={paramVal}
-						onChange={(v) => { setTyping(true); setParamVal(v); }}
+						onChange={setParamVal}
 						onSubmit={() => {
-							setTyping(false);
 							setAwaitParam(false);
 							runReport(pendingKey, paramVal);
 						}}
@@ -331,7 +336,7 @@ export default function AnalyticsScreen({ user }) {
 				)}
 			</Box>
 
-			{loading && <Text color="cyan">⟳  Running query…</Text>}
+			{loading && <Box><Spinner color="cyan" /><Text color="cyan"> Running query…</Text></Box>}
 			{error   && <Text color="red" >✗  {error}</Text>}
 
 			{data && !loading && (

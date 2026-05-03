@@ -1,8 +1,9 @@
 // source/screens/LoginScreen.js
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { setTyping } from '../typingContext.js';
+import Spinner from '../components/Spinner.js';
 import { login, register, createLocation } from '../api.js';
 
 // ── The secret admin passphrase ───────────────────────────────────────────────
@@ -29,6 +30,12 @@ const FIELD_LABELS = {
 };
 
 export default function LoginScreen({ onLogin }) {
+	// Login screen is always in text-input mode
+	useEffect(() => {
+		setTyping(true);
+		return () => setTyping(false);
+	}, []);
+
 	const [mode, setMode]           = useState('login');   // 'login' | 'register'
 	const [fieldIndex, setFieldIndex] = useState(0);
 	const [values, setValues]       = useState({});
@@ -170,7 +177,7 @@ export default function LoginScreen({ onLogin }) {
 				})}
 			</Box>
 
-			{loading && <Text color="cyan" marginTop={1}>Connecting…</Text>}
+			{loading && <Box marginTop={1}><Spinner /><Text color="cyan">Connecting…</Text></Box>}
 			{error   && <Text color="red"  marginTop={1}>✗ {error}</Text>}
 
 			<Text dimColor marginTop={1}>ENTER = confirm field • TAB = switch mode</Text>

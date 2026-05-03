@@ -1,45 +1,49 @@
 // source/screens/ProductsScreen.js
-// Admin: full CRUD (add, edit price, delete)
-// Customer: browse, search, add to in-memory cart
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput   from 'ink-text-input';
 import SelectInput from 'ink-select-input';
 import { setTyping } from '../typingContext.js';
+import Spinner from '../components/Spinner.js';
 import {
 	getProducts, createProduct, updatePrice,
 	deleteProduct, getCategories,
 } from '../api.js';
 
 const MODES = {
-	LIST:    'list',
-	SEARCH:  'search',
-	ADD:     'add',
-	PRICE:   'price',
-	DELETE:  'delete',
-	DETAIL:  'detail',
+	LIST:   'list',
+	SEARCH: 'search',
+	ADD:    'add',
+	PRICE:  'price',
+	DELETE: 'delete',
+	DETAIL: 'detail',
 };
+
+const TYPING_MODES = new Set([MODES.SEARCH, MODES.ADD, MODES.PRICE, MODES.DETAIL]);
 
 export default function ProductsScreen({ user, cart, setCart }) {
 	const isAdmin = user?.role === 'admin';
 
-	const [mode, setMode]                   = useState(MODES.LIST);
-	const [products, setProducts]           = useState([]);
-	const [categories, setCategories]       = useState([]);
-	const [loading, setLoading]             = useState(true);
-	const [error, setError]                 = useState('');
-	const [success, setSuccess]             = useState('');
-	const [searchTerm, setSearchTerm]       = useState('');
+	const [mode, setMode]                       = useState(MODES.LIST);
+	const [products, setProducts]               = useState([]);
+	const [categories, setCategories]           = useState([]);
+	const [loading, setLoading]                 = useState(true);
+	const [error, setError]                     = useState('');
+	const [success, setSuccess]                 = useState('');
+	const [searchTerm, setSearchTerm]           = useState('');
 	const [selectedProduct, setSelectedProduct] = useState(null);
-	const [newPrice, setNewPrice]           = useState('');
-	const [qtyInput, setQtyInput]           = useState('1');
-	const [page, setPage]                   = useState(0);
+	const [newPrice, setNewPrice]               = useState('');
+	const [qtyInput, setQtyInput]               = useState('1');
+	const [page, setPage]                       = useState(0);
+	const [addFields, setAddFields]             = useState({ productName: '', categoryID: '', price: '', stockQuantity: '' });
+	const [addStep, setAddStep]                 = useState(0);
 
 	const PAGE_SIZE = 12;
 
-	// Add product wizard
-	const [addFields, setAddFields] = useState({ productName: '', categoryID: '', price: '', stockQuantity: '' });
-	const [addStep, setAddStep]     = useState(0);
+	useEffect(() => {
+		setTyping(TYPING_MODES.has(mode));
+		return () => setTyping(false);   // always unlock on unmount
+	}, [mode]);
 
 	useEffect(() => {
 		fetchProducts();
@@ -68,7 +72,7 @@ export default function ProductsScreen({ user, cart, setCart }) {
 	};
 
 	const goList = () => {
-		setMode(MODES.LIST);
+		setMode(MODES.LIST);   
 		setError('');
 		setSuccess('');
 		setNewPrice('');
@@ -81,7 +85,6 @@ export default function ProductsScreen({ user, cart, setCart }) {
 			setError(''); setSuccess('');
 			return;
 		}
-
 		if (mode === MODES.LIST) {
 			if (input === 's' || input === 'S') { setSearchTerm(''); setMode(MODES.SEARCH); }
 			if (isAdmin && (input === 'a' || input === 'A')) {
@@ -89,13 +92,15 @@ export default function ProductsScreen({ user, cart, setCart }) {
 				setAddFields({ productName: '', categoryID: '', price: '', stockQuantity: '' });
 				setMode(MODES.ADD);
 			}
+			if (isAdmin && selectedProduct && (input === 'd' || input === 'D')) {
+				setMode(MODES.DELETE);
+			}
 			const maxPage = Math.ceil(products.length / PAGE_SIZE) - 1;
 			if ((input === 'n' || input === 'N') && page < maxPage) setPage((p) => p + 1);
 			if ((input === 'p' || input === 'P') && page > 0)       setPage((p) => p - 1);
 		}
 	});
 
-	// ── SEARCH ────────────────────────────────────────────────────────────────
 	if (mode === MODES.SEARCH) {
 		return (
 			<Box flexDirection="column" padding={1}>
@@ -104,9 +109,8 @@ export default function ProductsScreen({ user, cart, setCart }) {
 					<Text color="yellow">Name: </Text>
 					<TextInput
 						value={searchTerm}
-						onChange={(v) => { setTyping(true); setSearchTerm(v); }}
+						onChange={setSearchTerm}
 						onSubmit={async () => {
-							setTyping(false);
 							await fetchProducts(searchTerm);
 							setMode(MODES.LIST);
 						}}
@@ -117,7 +121,6 @@ export default function ProductsScreen({ user, cart, setCart }) {
 		);
 	}
 
-	// ── ADD PRODUCT (admin only) ───────────────────────────────────────────────
 	if (mode === MODES.ADD && isAdmin) {
 		const addFieldDefs = [
 			{ key: 'productName',   label: 'Product Name' },
@@ -127,10 +130,7 @@ export default function ProductsScreen({ user, cart, setCart }) {
 		];
 
 		const handleAddSubmit = async () => {
-			if (addStep < addFieldDefs.length - 1) {
-				setAddStep((s) => s + 1);
-				return;
-			}
+			if (addStep < addFieldDefs.length - 1) { setAddStep((s) => s + 1); return; }
 			setLoading(true);
 			try {
 				await createProduct({
@@ -164,8 +164,8 @@ export default function ProductsScreen({ user, cart, setCart }) {
 							) : (
 								<TextInput
 									value={addFields[def.key]}
-									onChange={(val) => { setTyping(true); setAddFields((f) => ({ ...f, [def.key]: val })); }}
-									onSubmit={() => { setTyping(false); handleAddSubmit(); }}
+									onChange={(val) => setAddFields((f) => ({ ...f, [def.key]: val }))}
+									onSubmit={handleAddSubmit}
 								/>
 							)}
 						</Box>
@@ -176,7 +176,6 @@ export default function ProductsScreen({ user, cart, setCart }) {
 		);
 	}
 
-	// ── UPDATE PRICE (admin only) ─────────────────────────────────────────────
 	if (mode === MODES.PRICE && selectedProduct && isAdmin) {
 		return (
 			<Box flexDirection="column" padding={1}>
@@ -186,9 +185,8 @@ export default function ProductsScreen({ user, cart, setCart }) {
 					<Text color="yellow">New Price: </Text>
 					<TextInput
 						value={newPrice}
-						onChange={(v) => { setTyping(true); setNewPrice(v); }}
+						onChange={setNewPrice}
 						onSubmit={async () => {
-							setTyping(false);
 							const p = Number(newPrice);
 							if (!p || p < 0) { setError('Invalid price.'); return; }
 							setLoading(true);
@@ -210,7 +208,6 @@ export default function ProductsScreen({ user, cart, setCart }) {
 		);
 	}
 
-	// ── DELETE CONFIRM (admin only) ───────────────────────────────────────────
 	if (mode === MODES.DELETE && selectedProduct && isAdmin) {
 		return (
 			<Box flexDirection="column" padding={1}>
@@ -243,10 +240,9 @@ export default function ProductsScreen({ user, cart, setCart }) {
 		);
 	}
 
-	// ── PRODUCT DETAIL / ADD TO CART (customer) ───────────────────────────────
 	if (mode === MODES.DETAIL && selectedProduct) {
-		const inCart     = cart?.find((c) => c.productId === selectedProduct.ProductID);
-		const cartQty    = inCart?.quantity || 0;
+		const inCart  = cart?.find((c) => c.productId === selectedProduct.ProductID);
+		const cartQty = inCart?.quantity || 0;
 
 		return (
 			<Box flexDirection="column" padding={1}>
@@ -254,15 +250,14 @@ export default function ProductsScreen({ user, cart, setCart }) {
 				<Text>Category : <Text color="white">{selectedProduct.CategoryName}</Text></Text>
 				<Text>Price     : <Text color="green">PKR {selectedProduct.Price}</Text></Text>
 				<Text>In Stock  : <Text color={selectedProduct.StockQuantity > 0 ? 'green' : 'red'}>{selectedProduct.StockQuantity}</Text></Text>
-				{cartQty > 0 && <Text color="yellow">In your cart: {cartQty}</Text>}
+				{cartQty > 0 && <Text color="yellow">Already in cart: {cartQty}</Text>}
 
-				<Box marginTop={1} flexDirection="column">
+				<Box marginTop={1}>
 					<Text color="yellow">Quantity to add: </Text>
 					<TextInput
 						value={qtyInput}
-						onChange={(v) => { setTyping(true); setQtyInput(v); }}
+						onChange={setQtyInput}
 						onSubmit={() => {
-							setTyping(false);
 							const qty = Number(qtyInput);
 							if (!qty || qty <= 0) { setError('Enter a valid quantity.'); return; }
 							if (qty > selectedProduct.StockQuantity) {
@@ -296,9 +291,8 @@ export default function ProductsScreen({ user, cart, setCart }) {
 		);
 	}
 
-	// ── PRODUCT LIST ──────────────────────────────────────────────────────────
-	const totalPages  = Math.max(1, Math.ceil(products.length / PAGE_SIZE));
-	const safePage    = Math.min(page, totalPages - 1);
+	const totalPages   = Math.max(1, Math.ceil(products.length / PAGE_SIZE));
+	const safePage     = Math.min(page, totalPages - 1);
 	const pageProducts = products.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
 	const productItems = pageProducts.map((p) => {
@@ -317,15 +311,15 @@ export default function ProductsScreen({ user, cart, setCart }) {
 					Products{searchTerm ? `  — "${searchTerm}"` : ''}
 				</Text>
 				{cart && cart.length > 0 && (
-					<Text color="yellow">   🛒 {cart.length} item(s) in cart  (go to Orders → C)</Text>
+					<Text color="yellow">   🛒 {cart.length} item(s) in cart  (Orders → C)</Text>
 				)}
 			</Box>
 
-			{error   && <Text color="red"   marginTop={0}>✗ {error}</Text>}
-			{success && <Text color="green" marginTop={0}>✓ {success}</Text>}
+			{error   && <Text color="red"   >✗ {error}</Text>}
+			{success && <Text color="green" >✓ {success}</Text>}
 
 			{loading ? (
-				<Text color="cyan">Loading…</Text>
+				<Box><Spinner /><Box><Spinner /><Text color="cyan">Loading…</Text></Box></Box>
 			) : products.length === 0 ? (
 				<Text dimColor>No products found.</Text>
 			) : (
@@ -345,17 +339,14 @@ export default function ProductsScreen({ user, cart, setCart }) {
 				/>
 			)}
 
-			{/* Pagination footer */}
 			{!loading && products.length > PAGE_SIZE && (
-				<Box marginTop={0}>
-					<Text dimColor>
-						{'  '}Products {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, products.length)} of {products.length}
-						{'   '}P = prev page  •  N = next page{'   '}(page {safePage + 1}/{totalPages})
-					</Text>
-				</Box>
+				<Text dimColor>
+					{'  '}Products {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, products.length)} of {products.length}
+					{'   '}P = prev  •  N = next{'   '}(page {safePage + 1}/{totalPages})
+				</Text>
 			)}
 
-			<Box marginTop={1} flexDirection="column">
+			<Box marginTop={1}>
 				{isAdmin ? (
 					<Text dimColor>ENTER = edit price • S = search • A = add • D = delete selected</Text>
 				) : (
@@ -363,15 +354,11 @@ export default function ProductsScreen({ user, cart, setCart }) {
 				)}
 			</Box>
 
-			{/* Admin: delete hint */}
 			{isAdmin && selectedProduct && mode === MODES.LIST && (
-				<Box marginTop={0}>
-					<Text dimColor>Selected: </Text>
-					<Text color="cyan">{selectedProduct.ProductName}</Text>
-					<Text dimColor>  — press </Text>
-					<Text color="red">D</Text>
-					<Text dimColor> to delete</Text>
-				</Box>
+				<Text dimColor>
+					Selected: <Text color="cyan">{selectedProduct.ProductName}</Text>
+					<Text color="red">  D</Text> to delete
+				</Text>
 			)}
 		</Box>
 	);

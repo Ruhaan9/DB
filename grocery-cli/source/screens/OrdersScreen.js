@@ -6,6 +6,7 @@ import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import TextInput   from 'ink-text-input';
 import { setTyping } from '../typingContext.js';
+import Spinner from '../components/Spinner.js';
 import { getOrders, getOrder, placeOrder, cancelOrder } from '../api.js';
 
 const MODES = {
@@ -32,6 +33,11 @@ export default function OrdersScreen({ user, cart, setCart }) {
 	const [editMode, setEditMode] = useState(false);
 
 	useEffect(() => { fetchOrders(); }, []);
+
+	// Lock global nav while editing a cart quantity
+	useEffect(() => {
+		setTyping(editMode);
+	}, [editMode]);
 
 	const fetchOrders = async () => {
 		setLoading(true);
@@ -295,7 +301,7 @@ export default function OrdersScreen({ user, cart, setCart }) {
 			{success && <Text color="green" marginTop={0}>✓ {success}</Text>}
 
 			{loading ? (
-				<Text color="cyan">Loading…</Text>
+				<Box><Spinner /><Box><Spinner /><Text color="cyan">Loading…</Text></Box></Box>
 			) : orders.length === 0 ? (
 				<Text dimColor>No orders yet.</Text>
 			) : (
